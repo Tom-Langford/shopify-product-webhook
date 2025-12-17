@@ -132,6 +132,7 @@ export default async function handler(req, res) {
       "   - Must include the FULL product title VERBATIM once (exact characters).",
       "   - Use the product name as the grammatical subject.",
       "   - No filler, no adjectives beyond material, colour, size, hardware.",
+      "   - The first paragraph must NOT contain construction, interior, condition, or material characteristics beyond basic identification.",
       "",
       "2) Second paragraph:",
       "   - Size and construction only.",

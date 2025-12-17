@@ -128,7 +128,7 @@ export default async function handler(req, res) {
       "",
       "Requirements:",
       "- Use British English",
-      "- Output valid HTML only (no markdown, no code fences, no ```)",
+      "- Output in plain text",
       "- Luxury resale tone: confident, minimal, no hype, no exclamation marks, no em dashes",
       "- Never invent missing facts - if a field is unknown or missing, omit it entirely",
       "- Structure the description as follows:",

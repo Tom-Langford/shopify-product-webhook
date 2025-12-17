@@ -29,6 +29,7 @@ export default async function handler(req, res) {
     console.log("[DEBUG] Request received:", {
       method: req.method,
       hasBody: !!req.body,
+      bodyType: typeof req.body,
       headers: {
         authorization: req.headers["authorization"] ? "Bearer ***" : "missing",
         contentType: req.headers["content-type"],
@@ -40,6 +41,26 @@ export default async function handler(req, res) {
       console.log("[DEBUG] Method not allowed:", req.method);
       clearTimeout(timeout);
       return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    // Parse body if it's a string (Vercel sometimes doesn't auto-parse)
+    let body = req.body;
+    if (typeof body === "string") {
+      try {
+        body = JSON.parse(body);
+        console.log("[DEBUG] Parsed body from string");
+      } catch (parseErr) {
+        console.error("[ERROR] Failed to parse JSON body:", parseErr.message);
+        clearTimeout(timeout);
+        return res.status(400).json({ 
+          error: "Invalid JSON in request body",
+          details: parseErr.message 
+        });
+      }
+    } else if (!body) {
+      console.error("[ERROR] Request body is missing");
+      clearTimeout(timeout);
+      return res.status(400).json({ error: "Request body is required" });
     }
 
     // Validate Bearer token authentication
@@ -80,12 +101,13 @@ export default async function handler(req, res) {
     }
 
     // Validate payload has minimum required fields
-    const { product, structured } = req.body || {};
+    const { product, structured } = body || {};
     console.log("[DEBUG] Payload validation:", {
       hasProduct: !!product,
       hasStructured: !!structured,
       productId: product?.id,
       productTitle: product?.title,
+      bodyKeys: body ? Object.keys(body) : [],
     });
     
     if (!product?.id || !product?.title) {

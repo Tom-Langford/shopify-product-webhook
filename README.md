@@ -119,8 +119,9 @@ If an editor's note is provided, it appears as the first paragraph verbatim, fol
 
 - `405 Method Not Allowed`: Request method is not POST
 - `401 Unauthorized`: Missing or incorrect Bearer token
-- `400 Bad Request`: Missing required product fields (id or title)
-- `500 Internal Server Error`: Generation failed or empty AI output
+- `400 Bad Request`: Missing required product fields (id or title), invalid JSON in request body, or request body is missing
+- `500 Internal Server Error`: Server configuration error, OpenAI API key not configured, generation failed, or empty AI output
+- `504 Gateway Timeout`: Request timeout (45 second limit for OpenAI API call)
 
 ## Description Generation
 

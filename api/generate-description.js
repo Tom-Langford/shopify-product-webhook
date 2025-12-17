@@ -95,7 +95,7 @@ export default async function handler(req, res) {
 
     // Build a “contract” prompt that forces dry catalogue style
     const prompt = [
-      "You are generating the MAIN product description field for a luxury resale Shopify store.",
+      "You are generating the MAIN product description field for a luxury resale Shopify store for knowledgable customers who know what they are looking for.",
       "",
       "IMPORTANT JOB CONTEXT:",
       "- This description is NOT the primary on-page UX content.",

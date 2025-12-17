@@ -1,55 +1,81 @@
 import OpenAI from "openai";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Initialize OpenAI client only if API key exists
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+  openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
+
+// Timeout wrapper for OpenAI calls
+const withTimeout = (promise, timeoutMs) => {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs)
+    ),
+  ]);
+};
 
 export default async function handler(req, res) {
-  console.log("[DEBUG] Request received:", {
-    method: req.method,
-    hasBody: !!req.body,
-    headers: {
-      authorization: req.headers["authorization"] ? "Bearer ***" : "missing",
-      contentType: req.headers["content-type"],
-    },
-  });
-
-  // Validate request method
-  if (req.method !== "POST") {
-    console.log("[DEBUG] Method not allowed:", req.method);
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
-  // Validate Bearer token authentication
-  const authHeader = req.headers["authorization"] || "";
-  const expectedToken = process.env.MECHANIC_BEARER_TOKEN;
-  
-  console.log("[DEBUG] Auth check:", {
-    hasAuthHeader: !!authHeader,
-    hasExpectedToken: !!expectedToken,
-  });
-  
-  if (!expectedToken) {
-    console.error("[ERROR] MECHANIC_BEARER_TOKEN is not set");
-    return res.status(500).json({ error: "Server configuration error" });
-  }
-  
-  const expectedAuth = `Bearer ${expectedToken}`;
-  if (authHeader !== expectedAuth) {
-    console.error("[ERROR] Authentication failed:", {
-      received: authHeader ? "Bearer ***" : "missing",
-      expected: "Bearer ***",
-    });
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  console.log("[DEBUG] Authentication successful");
+  // Set a longer timeout for Vercel (max 60s for Pro, 10s for Hobby)
+  const timeout = setTimeout(() => {
+    if (!res.headersSent) {
+      console.error("[ERROR] Request timeout - no response sent");
+      res.status(504).json({ error: "Request timeout" });
+    }
+  }, 50000); // 50 seconds to leave buffer
 
   try {
+    console.log("[DEBUG] Request received:", {
+      method: req.method,
+      hasBody: !!req.body,
+      headers: {
+        authorization: req.headers["authorization"] ? "Bearer ***" : "missing",
+        contentType: req.headers["content-type"],
+      },
+    });
+
+    // Validate request method
+    if (req.method !== "POST") {
+      console.log("[DEBUG] Method not allowed:", req.method);
+      clearTimeout(timeout);
+      return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    // Validate Bearer token authentication
+    const authHeader = req.headers["authorization"] || "";
+    const expectedToken = process.env.MECHANIC_BEARER_TOKEN;
+    
+    console.log("[DEBUG] Auth check:", {
+      hasAuthHeader: !!authHeader,
+      hasExpectedToken: !!expectedToken,
+    });
+    
+    if (!expectedToken) {
+      console.error("[ERROR] MECHANIC_BEARER_TOKEN is not set");
+      clearTimeout(timeout);
+      return res.status(500).json({ error: "Server configuration error" });
+    }
+    
+    const expectedAuth = `Bearer ${expectedToken}`;
+    if (authHeader !== expectedAuth) {
+      console.error("[ERROR] Authentication failed:", {
+        received: authHeader ? "Bearer ***" : "missing",
+        expected: "Bearer ***",
+      });
+      clearTimeout(timeout);
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    console.log("[DEBUG] Authentication successful");
+
     // Check OpenAI API key is configured
-    const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
+    const hasOpenAIKey = !!process.env.OPENAI_API_KEY && !!openai;
     console.log("[DEBUG] OpenAI API key check:", { configured: hasOpenAIKey });
     
     if (!hasOpenAIKey) {
-      console.error("[ERROR] OPENAI_API_KEY is not set");
+      console.error("[ERROR] OPENAI_API_KEY is not set or OpenAI client not initialized");
+      clearTimeout(timeout);
       return res.status(500).json({ error: "OpenAI API key not configured" });
     }
 
@@ -67,6 +93,7 @@ export default async function handler(req, res) {
         hasId: !!product?.id,
         hasTitle: !!product?.title,
       });
+      clearTimeout(timeout);
       return res.status(400).json({ error: "Missing required product fields" });
     }
 
@@ -126,21 +153,24 @@ export default async function handler(req, res) {
     console.log("[DEBUG] Prompt built, length:", prompt.length);
     console.log("[DEBUG] Calling OpenAI API...");
 
-    // Call OpenAI API
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert luxury resale copywriter. Always output valid HTML only, never markdown.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.7,
-    });
+    // Call OpenAI API with timeout
+    const completion = await withTimeout(
+      openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert luxury resale copywriter. Always output valid HTML only, never markdown.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature: 0.7,
+      }),
+      45000 // 45 second timeout
+    );
 
     console.log("[DEBUG] OpenAI API call successful:", {
       hasChoices: !!completion.choices,
@@ -157,10 +187,12 @@ export default async function handler(req, res) {
 
     if (!descriptionHtml) {
       console.error("[ERROR] Empty AI output");
+      clearTimeout(timeout);
       return res.status(500).json({ error: "Empty AI output" });
     }
 
     console.log("[DEBUG] Returning success response");
+    clearTimeout(timeout);
     // Return the description HTML
     return res.status(200).json({ description_html: descriptionHtml });
   } catch (err) {
@@ -176,6 +208,14 @@ export default async function handler(req, res) {
       stack: err.stack,
     });
     
+    clearTimeout(timeout);
+    
+    // Only send response if headers haven't been sent
+    if (res.headersSent) {
+      console.error("[ERROR] Headers already sent, cannot send error response");
+      return;
+    }
+    
     // Return appropriate error status with more detail
     if (err.status === 401 || err.statusCode === 401) {
       console.error("[ERROR] OpenAI authentication failed");
@@ -189,6 +229,14 @@ export default async function handler(req, res) {
       console.error("[ERROR] OpenAI rate limit exceeded");
       return res.status(500).json({ 
         error: "OpenAI rate limit exceeded",
+        details: err.message,
+      });
+    }
+    
+    if (err.message && err.message.includes("timeout")) {
+      console.error("[ERROR] Request timeout");
+      return res.status(504).json({ 
+        error: "Request timeout",
         details: err.message,
       });
     }

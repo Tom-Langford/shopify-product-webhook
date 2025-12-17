@@ -14,55 +14,26 @@ const withTimeout = (promise, timeoutMs) => {
   ]);
 };
 
-// Strip accidental code fences if the model ever adds them
+// Remove accidental code fences if present
 const stripCodeFences = (s) =>
   (s || "").replace(/^```[a-z]*\n?/i, "").replace(/```$/i, "").trim();
 
 /**
- * Fix ONLY the opening sentence if it violates catalogue rules.
- * Everything else is left untouched.
+ * FIX ONLY THE FIRST SENTENCE.
+ * Remove illegal copular phrases like:
+ * "is a handbag from Hermès"
+ * without introducing ANY new wording.
  */
-function fixOpeningSentence(text, product, structured) {
+function fixFirstSentenceOnly(text) {
   if (!text) return text;
 
   const sentences = text.split(/(?<=[.!?])\s+/);
   if (!sentences.length) return text;
 
-  const first = sentences[0];
-
-  // Forbidden opening patterns
-  const forbiddenOpening =
-    /^(this\s+(handbag|bag|item)\b|.+\s+is\s+(a|an)\b)/i;
-
-  // If opening sentence is already acceptable, do nothing
-  if (!forbiddenOpening.test(first)) {
-    return text;
-  }
-
-  const title = product?.title?.trim();
-  if (!title) return text;
-
-  const specs = structured?.specifications || {};
-  const fragments = [];
-
-  if (specs.hermes_material) {
-    fragments.push(`crafted from ${specs.hermes_material}`);
-  }
-
-  if (specs.hermes_colour) {
-    fragments.push(`in ${specs.hermes_colour}`);
-  }
-
-  if (specs.hardware) {
-    fragments.push(`with ${specs.hardware} hardware`);
-  }
-
-  const replacement =
-    fragments.length > 0
-      ? `${title} ${fragments.join(" ")}.`
-      : `${title}.`;
-
-  sentences[0] = replacement;
+  sentences[0] = sentences[0]
+    .replace(/\s+is\s+(a|an)\s+(handbag|bag|item)\s+from\s+Hermès\b/i, "")
+    .replace(/\s+\./, ".")
+    .trim();
 
   return sentences.join(" ");
 }
@@ -84,14 +55,14 @@ export default async function handler(req, res) {
     let body = req.body;
     if (typeof body === "string") {
       body = JSON.parse(body);
-    }
-    if (!body) {
+    } else if (!body) {
       clearTimeout(timeout);
       return res.status(400).json({ error: "Request body is required" });
     }
 
     const authHeader = req.headers["authorization"] || "";
     const expectedToken = process.env.MECHANIC_BEARER_TOKEN;
+
     if (!expectedToken) {
       clearTimeout(timeout);
       return res.status(500).json({ error: "Server configuration error" });
@@ -119,7 +90,7 @@ export default async function handler(req, res) {
       "";
 
     const prompt = [
-      "You are generating the MAIN product description field for a luxury resale Shopify store for knowledgeable customers who know what they are looking for.",
+      "You are generating the MAIN product description field for a luxury resale Shopify store for knowldgable customers who know what they are looking for.",
       "",
       "IMPORTANT JOB CONTEXT:",
       "- This description is NOT the primary on-page UX content.",
@@ -132,9 +103,9 @@ export default async function handler(req, res) {
       "- The goal is factual clarity and search relevance, not brand storytelling.",
       "- The output must read like catalogue copy, not marketing copy.",
       "",
-      "FAILURE MODES TO AVOID (DO NOT DO THESE):",
+      "FAILURE MODES TO AVOID:",
       "- Generic marketing language or sales tone.",
-      "- Subjective adjectives such as: luxury, iconic, elegant, stylish, casual, versatile, premium, timeless.",
+      "- Subjective adjectives such as luxury, iconic, elegant, stylish, casual, versatile, premium, timeless.",
       "- Sentence starters like 'This handbag', 'This bag', 'This item', or 'It is'.",
       "- Demonstrative or filler phrases such as 'features', 'adds', 'making it suitable for'.",
       "- Inferred lifestyle or usage.",
@@ -145,8 +116,7 @@ export default async function handler(req, res) {
       "- Output VALID PLAIN TEXT only.",
       "- Use British English.",
       "- No exclamation marks. No em dashes.",
-      "- Do not invent facts. If data is missing, omit it.",
-      "- Keep length between 100 and 180 words unless an Editor’s Note is present.",
+      "- Do not invent facts.",
       "- Dimensions may appear ONLY in the final paragraph.",
       "",
       "STRUCTURE:",
@@ -154,10 +124,6 @@ export default async function handler(req, res) {
       "2) Second paragraph: size and construction only.",
       "3) Third paragraph: material and colour characteristics only.",
       "4) Final paragraph: condition, stamp, receipt, accessories, dimensions, colour code.",
-      "",
-      "EDITOR’S NOTE LOGIC:",
-      "- If an Editor’s Note is provided, output it verbatim as the FIRST paragraph.",
-      "- Then continue with paragraphs 2–4 only.",
       "",
       "INPUT JSON:",
       JSON.stringify({ product, structured, editor_note: editorNote || undefined }, null, 2),
@@ -186,8 +152,8 @@ export default async function handler(req, res) {
     const raw = completion.choices?.[0]?.message?.content || "";
     let descriptionText = stripCodeFences(raw);
 
-    // 🔒 Fix ONLY the opening sentence if required
-    descriptionText = fixOpeningSentence(descriptionText, product, structured);
+    // 🔧 ONLY fix the first sentence
+    descriptionText = fixFirstSentenceOnly(descriptionText);
 
     if (!descriptionText) {
       clearTimeout(timeout);
@@ -200,8 +166,8 @@ export default async function handler(req, res) {
     clearTimeout(timeout);
     if (res.headersSent) return;
 
-    if (err.message?.includes("timeout")) {
-      return res.status(504).json({ error: "Request timeout" });
+    if (err.message && err.message.includes("timeout")) {
+      return res.status(504).json({ error: "Request timeout", details: err.message });
     }
 
     return res.status(500).json({

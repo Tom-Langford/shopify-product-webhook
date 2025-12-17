@@ -97,6 +97,7 @@ export default async function handler(req, res) {
       "BODY COPY RULES:",
       "- Refer to the product using the combined brand + style name (e.g. 'Hermès Birkin', 'Chanel Boy Bag') at least once after the opening sentence.",
       "- Paragraph 2: size and construction only.",
+      "- Use the combined brand + style name (e.g. 'Hermès Birkin', 'Hermès Kelly', 'Chanel Boy Bag') as the grammatical subject of at least one paragraph after the opening sentence, where it reads naturally.",
       "- Paragraph 3: material and colour characteristics only, based strictly on supplied descriptions.",
       "- Final paragraph: condition, stamp, receipt, accessories, dimensions, colour code.",
       "",

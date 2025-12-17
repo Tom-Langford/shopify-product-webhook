@@ -3,8 +3,18 @@ import OpenAI from "openai";
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export default async function handler(req, res) {
+  console.log("[DEBUG] Request received:", {
+    method: req.method,
+    hasBody: !!req.body,
+    headers: {
+      authorization: req.headers["authorization"] ? "Bearer ***" : "missing",
+      contentType: req.headers["content-type"],
+    },
+  });
+
   // Validate request method
   if (req.method !== "POST") {
+    console.log("[DEBUG] Method not allowed:", req.method);
     return res.status(405).json({ error: "Method not allowed" });
   }
 
@@ -12,29 +22,56 @@ export default async function handler(req, res) {
   const authHeader = req.headers["authorization"] || "";
   const expectedToken = process.env.MECHANIC_BEARER_TOKEN;
   
+  console.log("[DEBUG] Auth check:", {
+    hasAuthHeader: !!authHeader,
+    hasExpectedToken: !!expectedToken,
+  });
+  
   if (!expectedToken) {
+    console.error("[ERROR] MECHANIC_BEARER_TOKEN is not set");
     return res.status(500).json({ error: "Server configuration error" });
   }
   
   const expectedAuth = `Bearer ${expectedToken}`;
   if (authHeader !== expectedAuth) {
+    console.error("[ERROR] Authentication failed:", {
+      received: authHeader ? "Bearer ***" : "missing",
+      expected: "Bearer ***",
+    });
     return res.status(401).json({ error: "Unauthorized" });
   }
 
+  console.log("[DEBUG] Authentication successful");
+
   try {
     // Check OpenAI API key is configured
-    if (!process.env.OPENAI_API_KEY) {
-      console.error("OPENAI_API_KEY is not set");
+    const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
+    console.log("[DEBUG] OpenAI API key check:", { configured: hasOpenAIKey });
+    
+    if (!hasOpenAIKey) {
+      console.error("[ERROR] OPENAI_API_KEY is not set");
       return res.status(500).json({ error: "OpenAI API key not configured" });
     }
 
     // Validate payload has minimum required fields
     const { product, structured } = req.body || {};
+    console.log("[DEBUG] Payload validation:", {
+      hasProduct: !!product,
+      hasStructured: !!structured,
+      productId: product?.id,
+      productTitle: product?.title,
+    });
+    
     if (!product?.id || !product?.title) {
+      console.error("[ERROR] Missing required product fields:", {
+        hasId: !!product?.id,
+        hasTitle: !!product?.title,
+      });
       return res.status(400).json({ error: "Missing required product fields" });
     }
 
     // Build comprehensive prompt for OpenAI
+    console.log("[DEBUG] Building prompt...");
     const prompt = [
       "You are an expert luxury resale copywriter and SEO specialist specialising in Hermès handbags.",
       "",
@@ -86,6 +123,9 @@ export default async function handler(req, res) {
       "Generate the description HTML now:",
     ].join("\n");
 
+    console.log("[DEBUG] Prompt built, length:", prompt.length);
+    console.log("[DEBUG] Calling OpenAI API...");
+
     // Call OpenAI API
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -102,42 +142,62 @@ export default async function handler(req, res) {
       temperature: 0.7,
     });
 
+    console.log("[DEBUG] OpenAI API call successful:", {
+      hasChoices: !!completion.choices,
+      choicesLength: completion.choices?.length || 0,
+      hasContent: !!completion.choices?.[0]?.message?.content,
+    });
+
     const descriptionHtml = completion.choices[0]?.message?.content?.trim() || "";
 
+    console.log("[DEBUG] Description HTML extracted:", {
+      length: descriptionHtml.length,
+      isEmpty: !descriptionHtml,
+    });
+
     if (!descriptionHtml) {
+      console.error("[ERROR] Empty AI output");
       return res.status(500).json({ error: "Empty AI output" });
     }
 
+    console.log("[DEBUG] Returning success response");
     // Return the description HTML
     return res.status(200).json({ description_html: descriptionHtml });
   } catch (err) {
     // Log full error details for debugging
-    console.error("Error generating description:", {
+    console.error("[ERROR] Exception caught:", {
       message: err.message,
+      name: err.name,
       status: err.status,
       statusCode: err.statusCode,
       code: err.code,
       type: err.type,
+      cause: err.cause,
       stack: err.stack,
     });
     
     // Return appropriate error status with more detail
     if (err.status === 401 || err.statusCode === 401) {
-      return res.status(500).json({ error: "OpenAI authentication failed - check API key" });
+      console.error("[ERROR] OpenAI authentication failed");
+      return res.status(500).json({ 
+        error: "OpenAI authentication failed - check API key",
+        details: err.message,
+      });
     }
     
     if (err.status === 429 || err.statusCode === 429) {
-      return res.status(500).json({ error: "OpenAI rate limit exceeded" });
+      console.error("[ERROR] OpenAI rate limit exceeded");
+      return res.status(500).json({ 
+        error: "OpenAI rate limit exceeded",
+        details: err.message,
+      });
     }
     
-    // Include error message in response for debugging (in development)
-    const errorMessage = process.env.NODE_ENV === "development" 
-      ? err.message || "Generation failed"
-      : "Generation failed";
-    
+    // Include error message in response for debugging
     return res.status(500).json({ 
-      error: errorMessage,
-      ...(process.env.NODE_ENV === "development" && { details: err.message })
+      error: "Generation failed",
+      details: err.message,
+      code: err.code || err.name,
     });
   }
 }

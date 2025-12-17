@@ -4,7 +4,7 @@ A serverless webhook endpoint (Node.js, Vercel) that generates luxury, SEO-optim
 
 ## Overview
 
-This webhook is called by a Mechanic task when Shopify products are created or updated. It generates HTML product descriptions and returns them to Mechanic, which then updates Shopify.
+This webhook is called by a Mechanic task when Shopify products are created or updated. It generates plain text product descriptions and returns them to Mechanic, which then updates Shopify.
 
 **Important**: This webhook does NOT write to Shopify directly. All Shopify updates happen in Mechanic using GraphQL.
 
@@ -96,7 +96,7 @@ This webhook is called by a Mechanic task when Shopify products are created or u
 
 ```json
 {
-  "description_html": "<p>...</p>"
+  "description": "Plain text product description..."
 }
 ```
 
@@ -111,7 +111,7 @@ This webhook is called by a Mechanic task when Shopify products are created or u
 
 The webhook generates descriptions with:
 - British English
-- Valid HTML only (no markdown)
+- Plain text only (no HTML, no markdown, no formatting codes)
 - Luxury resale tone (confident, minimal, no hype)
 - Structure: intro paragraph → "At a glance" bullets → SEO paragraphs
 - Natural incorporation of SEO keywords (Hermès, Birkin, Kelly, sizes, colours, materials, etc.)

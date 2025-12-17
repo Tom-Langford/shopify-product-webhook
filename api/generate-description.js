@@ -133,7 +133,7 @@ export default async function handler(req, res) {
       "- Never invent missing facts - if a field is unknown or missing, omit it entirely",
       "- Structure the description as follows:",
       "  1. A short introductory paragraph (2-3 sentences)",
-      "  2. An 'At a glance' section with a bulleted list (<ul><li>) of key features",
+      "  2. An 'At a glance' section with a bulleted list (use plain text with dashes or asterisks) of key features",
       "  3. A few short paragraphs incorporating relevant SEO phrases naturally",
       "",
       "Data structure:",
@@ -169,7 +169,7 @@ export default async function handler(req, res) {
       "Product data (JSON):",
       JSON.stringify({ product, structured }, null, 2),
       "",
-      "Generate the description HTML now:",
+      "Generate the description in plain text now:",
     ].join("\n");
 
     console.log("[DEBUG] Prompt built, length:", prompt.length);
@@ -182,7 +182,7 @@ export default async function handler(req, res) {
         messages: [
           {
             role: "system",
-            content: "You are an expert luxury resale copywriter. Always output valid HTML only, never markdown.",
+            content: "You are an expert luxury resale copywriter. Always output plain text only, no HTML, no markdown, no formatting codes.",
           },
           {
             role: "user",
@@ -200,14 +200,14 @@ export default async function handler(req, res) {
       hasContent: !!completion.choices?.[0]?.message?.content,
     });
 
-    const descriptionHtml = completion.choices[0]?.message?.content?.trim() || "";
+    const description = completion.choices[0]?.message?.content?.trim() || "";
 
-    console.log("[DEBUG] Description HTML extracted:", {
-      length: descriptionHtml.length,
-      isEmpty: !descriptionHtml,
+    console.log("[DEBUG] Description extracted:", {
+      length: description.length,
+      isEmpty: !description,
     });
 
-    if (!descriptionHtml) {
+    if (!description) {
       console.error("[ERROR] Empty AI output");
       clearTimeout(timeout);
       return res.status(500).json({ error: "Empty AI output" });
@@ -215,8 +215,8 @@ export default async function handler(req, res) {
 
     console.log("[DEBUG] Returning success response");
     clearTimeout(timeout);
-    // Return the description HTML
-    return res.status(200).json({ description_html: descriptionHtml });
+    // Return the description as plain text
+    return res.status(200).json({ description: description });
   } catch (err) {
     // Log full error details for debugging
     console.error("[ERROR] Exception caught:", {

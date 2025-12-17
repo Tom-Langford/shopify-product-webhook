@@ -48,28 +48,49 @@ This webhook is called by a Mechanic task when Shopify products are created or u
     "handle": "hermes-birkin-30"
   },
   "structured": {
-    "puzzle": {
-      "style_size": "...",
-      "construction": "...",
-      "material": ["..."],
-      "colour": ["..."],
-      "hardware": "..."
-    },
     "specifications": {
-      "bag_style": "...",
-      "bag_size": "...",
-      "hermes_colour": "...",
-      "hermes_material": "...",
-      "hardware": "...",
-      "dimensions": ["..."],
+      "bag_style": "Birkin",
+      "bag_size": "30",
+      "hardware": "Palladium",
       "stamp": "...",
-      "condition": "...",
-      "receipt": ["..."],
-      "accessories": "..."
+      "condition": "Excellent",
+      "receipt": ["Receipt 1", "Receipt 2"],
+      "accessories": "...",
+      "dimensions": [
+        { "value": "30", "unit": "cm" },
+        { "value": "22", "unit": "cm" },
+        { "value": "16", "unit": "cm" }
+      ],
+      "hermes_colour": "Blue | Navy",
+      "hermes_colour_code": "Bleu | ...",
+      "hermes_material": "Calfskin | Togo"
+    },
+    "puzzle": {
+      "style_size_description": "Style & Size description text...",
+      "construction_description": "Construction details...",
+      "material_descriptions": ["Material description 1", "Material description 2"],
+      "colour_descriptions": ["Colour description 1", "Colour description 2"],
+      "hardware_description": "Hardware details..."
     }
   }
 }
 ```
+
+### Data Structure Notes
+
+**Specifications** (for factual accuracy and SEO):
+- Core fields: `bag_style`, `bag_size` (displayed as "Xcm"), `hardware`, `stamp`, `condition`, `receipt` (array), `accessories`
+- `dimensions`: Array of objects with `value` and `unit`, formatted as "value unit x value unit x ..."
+- `hermes_colour`: Derived from metaobject categories (may be pipe-separated)
+- `hermes_colour_code`: Colour codes (may be pipe-separated)
+- `hermes_material`: Derived from metaobject categories (may be pipe-separated)
+
+**Puzzle Description** (for narrative content):
+- `style_size_description`: From size_style_description metaobject
+- `construction_description`: From hermes_construction metaobject
+- `material_descriptions`: Array from hermes_material metaobject list
+- `colour_descriptions`: Array from hermes_colour metaobject list
+- `hardware_description`: From hermes_hardware metaobject
 
 ## Response Format
 

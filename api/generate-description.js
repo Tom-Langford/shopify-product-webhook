@@ -100,12 +100,14 @@ export default async function handler(req, res) {
       "Your job is NOT to sound poetic or salesy. Your job is to be clear, factual, and commercially useful.",
       "",
       "Output rules (must follow):",
-      "- Output VALID HTML only (no markdown, no code fences).",
+      "- Output VALID PLAIN TEXT only (no HTML, no markdown, no code fences, no ```).",
       "- Use British English.",
       "- No hype and no filler. Avoid phrases like: 'discover', 'elegance', 'iconic', 'coveted', 'timeless', 'adds to the allure', 'remarkable', 'true representation of luxury'.",
+      "- Also avoid generic filler like: 'luxury handbag', 'stylish accessory', 'must-have', 'addition to any collection'.",
       "- No exclamation marks. No em dashes.",
       "- Do not invent facts. If a field is missing/unknown, omit it.",
-      "- Keep it concise: aim for 120–220 words unless the Editor’s Note is long.",
+      "- Keep it concise: aim for 100–180 words unless the Editor’s Note is long.",
+      "- Do not repeat dimensions more than once.",
       "",
       "Structure (must follow):",
       "1) First paragraph: restate the FULL product identity naturally, including style + size + colour + material + hardware, using the product title if it contains these.",
@@ -133,7 +135,7 @@ export default async function handler(req, res) {
         2
       ),
       "",
-      "Now produce the HTML description.",
+      "Now produce the plain text description.",
     ].join("\n");
 
     console.log("[DEBUG] Calling OpenAI API...");

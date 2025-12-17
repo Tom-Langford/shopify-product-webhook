@@ -5,43 +5,20 @@ if (process.env.OPENAI_API_KEY) {
   openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-const withTimeout = (promise, timeoutMs) => {
-  return Promise.race([
+const withTimeout = (promise, timeoutMs) =>
+  Promise.race([
     promise,
     new Promise((_, reject) =>
       setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs)
     ),
   ]);
-};
 
-// Remove accidental code fences if present
 const stripCodeFences = (s) =>
   (s || "").replace(/^```[a-z]*\n?/i, "").replace(/```$/i, "").trim();
-
-/**
- * FIX ONLY THE FIRST SENTENCE.
- * Remove illegal copular phrases like:
- * "is a handbag from Hermès"
- * without introducing ANY new wording.
- */
-function fixFirstSentenceOnly(text) {
-  if (!text) return text;
-
-  const sentences = text.split(/(?<=[.!?])\s+/);
-  if (!sentences.length) return text;
-
-  sentences[0] = sentences[0]
-    .replace(/\s+is\s+(a|an)\s+(handbag|bag|item)\s+from\s+Hermès\b/i, "")
-    .replace(/\s+\./, ".")
-    .trim();
-
-  return sentences.join(" ");
-}
 
 export default async function handler(req, res) {
   const timeout = setTimeout(() => {
     if (!res.headersSent) {
-      console.error("[ERROR] Request timeout - no response sent");
       res.status(504).json({ error: "Request timeout" });
     }
   }, 50000);
@@ -53,22 +30,15 @@ export default async function handler(req, res) {
     }
 
     let body = req.body;
-    if (typeof body === "string") {
-      body = JSON.parse(body);
-    } else if (!body) {
+    if (typeof body === "string") body = JSON.parse(body);
+    if (!body) {
       clearTimeout(timeout);
       return res.status(400).json({ error: "Request body is required" });
     }
 
     const authHeader = req.headers["authorization"] || "";
     const expectedToken = process.env.MECHANIC_BEARER_TOKEN;
-
-    if (!expectedToken) {
-      clearTimeout(timeout);
-      return res.status(500).json({ error: "Server configuration error" });
-    }
-
-    if (authHeader !== `Bearer ${expectedToken}`) {
+    if (!expectedToken || authHeader !== `Bearer ${expectedToken}`) {
       clearTimeout(timeout);
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -78,7 +48,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "OpenAI API key not configured" });
     }
 
-    const { product, structured } = body || {};
+    const { product, structured } = body;
     if (!product?.id || !product?.title) {
       clearTimeout(timeout);
       return res.status(400).json({ error: "Missing required product fields" });
@@ -89,46 +59,69 @@ export default async function handler(req, res) {
       product?.editor_note ||
       "";
 
+    /**
+     * PROMPT
+     * This is where behaviour is now correctly enforced.
+     */
     const prompt = [
-      "You are generating the MAIN product description field for a luxury resale Shopify store for knowldgable customers who know what they are looking for.",
+      "You are writing catalogue-style product descriptions for a luxury resale store.",
       "",
-      "IMPORTANT JOB CONTEXT:",
-      "- This description is NOT the primary on-page UX content.",
-      "- Detailed specifications are shown elsewhere in a structured table.",
-      "- Curated narrative content is shown elsewhere using modular puzzle descriptions.",
-      "- This description exists primarily for SEO, Google Merchant feeds, Meta/Facebook listings, and Shopify Collective.",
+      "AUDIENCE:",
+      "- Highly informed buyers who already know the brand, style, size, and materials.",
+      "- Do NOT explain what the product is.",
       "",
-      "Therefore:",
-      "- The description must stand alone when read outside the website.",
-      "- The goal is factual clarity and search relevance, not brand storytelling.",
-      "- The output must read like catalogue copy, not marketing copy.",
+      "PRIMARY PURPOSE:",
+      "- SEO performance",
+      "- Google Merchant, Meta, Shopify Collective feeds",
       "",
-      "FAILURE MODES TO AVOID:",
-      "- Generic marketing language or sales tone.",
-      "- Subjective adjectives such as luxury, iconic, elegant, stylish, casual, versatile, premium, timeless.",
-      "- Sentence starters like 'This handbag', 'This bag', 'This item', or 'It is'.",
-      "- Demonstrative or filler phrases such as 'features', 'adds', 'making it suitable for'.",
-      "- Inferred lifestyle or usage.",
-      "- Repeating the same facts in multiple ways.",
-      "- Repeating dimensions outside the final paragraph.",
+      "TONE:",
+      "- Dry, factual, auction-catalogue style",
+      "- No marketing language",
+      "- Assume expert reader",
+      "",
+      "ABSOLUTE PROHIBITIONS:",
+      "- Do NOT define the product (no 'is a handbag', 'is a bag', 'this item').",
+      "- Do NOT use adjectives such as luxury, iconic, elegant, timeless, versatile.",
+      "- Do NOT infer lifestyle or usage.",
+      "- Do NOT repeat dimensions outside the final paragraph.",
+      "",
+      "OPENING SENTENCE (CRITICAL):",
+      "- ONE sentence only.",
+      "- Must restate the full product identity using high-intent qualifiers.",
+      "- Use one of these canonical patterns:",
+      "  Pattern A: '[Brand] [Style] [Size] in [Colour] [Material] with [Hardware].'",
+      "  Pattern B: '[Brand] [Style] [Size] in [Colour] ([Colour Code]) [Material] with [Hardware].'",
+      "- Omit any element that is missing rather than padding.",
+      "- No verbs like 'is', 'features', 'known for'.",
+      "",
+      "BODY COPY RULES:",
+      "- Refer to the product using the combined brand + style name (e.g. 'Hermès Birkin', 'Chanel Boy Bag') at least once after the opening sentence.",
+      "- Paragraph 2: size and construction only.",
+      "- Paragraph 3: material and colour characteristics only, based strictly on supplied descriptions.",
+      "- Final paragraph: condition, stamp, receipt, accessories, dimensions, colour code.",
+      "",
+      "EDITOR’S NOTE:",
+      "- If provided, output it verbatim as the FIRST paragraph.",
+      "- Then continue with the structure above.",
       "",
       "OUTPUT RULES:",
-      "- Output VALID PLAIN TEXT only.",
-      "- Use British English.",
-      "- No exclamation marks. No em dashes.",
-      "- Do not invent facts.",
-      "- Dimensions may appear ONLY in the final paragraph.",
-      "",
-      "STRUCTURE:",
-      "1) First paragraph: ONE complete sentence including the full product title verbatim.",
-      "2) Second paragraph: size and construction only.",
-      "3) Third paragraph: material and colour characteristics only.",
-      "4) Final paragraph: condition, stamp, receipt, accessories, dimensions, colour code.",
+      "- Plain text only.",
+      "- British English.",
+      "- No bullet points, no markdown, no HTML.",
+      "- 100–180 words unless Editor’s Note is present.",
       "",
       "INPUT JSON:",
-      JSON.stringify({ product, structured, editor_note: editorNote || undefined }, null, 2),
+      JSON.stringify(
+        {
+          product,
+          structured,
+          editor_note: editorNote || undefined,
+        },
+        null,
+        2
+      ),
       "",
-      "Write the description now.",
+      "Write the description now, following every rule exactly.",
     ].join("\n");
 
     const completion = await withTimeout(
@@ -138,11 +131,11 @@ export default async function handler(req, res) {
           {
             role: "system",
             content:
-              "You are a commerce SEO catalogue writer for a luxury resale store. Be concise, factual, and avoid hype.",
+              "You are a catalogue copywriter for a luxury resale business. Be precise, factual, and concise.",
           },
           { role: "user", content: prompt },
         ],
-        temperature: 0.2,
+        temperature: 0.15,
         presence_penalty: 0,
         frequency_penalty: 0,
       }),
@@ -150,10 +143,7 @@ export default async function handler(req, res) {
     );
 
     const raw = completion.choices?.[0]?.message?.content || "";
-    let descriptionText = stripCodeFences(raw);
-
-    // 🔧 ONLY fix the first sentence
-    descriptionText = fixFirstSentenceOnly(descriptionText);
+    const descriptionText = stripCodeFences(raw);
 
     if (!descriptionText) {
       clearTimeout(timeout);
@@ -165,11 +155,6 @@ export default async function handler(req, res) {
   } catch (err) {
     clearTimeout(timeout);
     if (res.headersSent) return;
-
-    if (err.message && err.message.includes("timeout")) {
-      return res.status(504).json({ error: "Request timeout", details: err.message });
-    }
-
     return res.status(500).json({
       error: "Generation failed",
       details: err.message,

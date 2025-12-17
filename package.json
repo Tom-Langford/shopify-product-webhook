@@ -1,0 +1,21 @@
+{
+  "name": "shopify-product-webhook",
+  "version": "1.0.0",
+  "description": "Serverless webhook endpoint for generating luxury product descriptions using OpenAI",
+  "type": "module",
+  "main": "api/generate-description.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel deploy"
+  },
+  "dependencies": {
+    "openai": "^4.20.0"
+  },
+  "devDependencies": {
+    "vercel": "^33.0.0"
+  },
+  "engines": {
+    "node": ">=18.x"
+  }
+}
+

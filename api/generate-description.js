@@ -22,6 +22,12 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Check OpenAI API key is configured
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("OPENAI_API_KEY is not set");
+      return res.status(500).json({ error: "OpenAI API key not configured" });
+    }
+
     // Validate payload has minimum required fields
     const { product, structured } = req.body || {};
     if (!product?.id || !product?.title) {
@@ -105,13 +111,33 @@ export default async function handler(req, res) {
     // Return the description HTML
     return res.status(200).json({ description_html: descriptionHtml });
   } catch (err) {
-    console.error("Error generating description:", err);
+    // Log full error details for debugging
+    console.error("Error generating description:", {
+      message: err.message,
+      status: err.status,
+      statusCode: err.statusCode,
+      code: err.code,
+      type: err.type,
+      stack: err.stack,
+    });
     
-    // Return appropriate error status
-    if (err.status === 401 || err.status === 403) {
-      return res.status(500).json({ error: "OpenAI authentication failed" });
+    // Return appropriate error status with more detail
+    if (err.status === 401 || err.statusCode === 401) {
+      return res.status(500).json({ error: "OpenAI authentication failed - check API key" });
     }
     
-    return res.status(500).json({ error: "Generation failed" });
+    if (err.status === 429 || err.statusCode === 429) {
+      return res.status(500).json({ error: "OpenAI rate limit exceeded" });
+    }
+    
+    // Include error message in response for debugging (in development)
+    const errorMessage = process.env.NODE_ENV === "development" 
+      ? err.message || "Generation failed"
+      : "Generation failed";
+    
+    return res.status(500).json({ 
+      error: errorMessage,
+      ...(process.env.NODE_ENV === "development" && { details: err.message })
+    });
   }
 }

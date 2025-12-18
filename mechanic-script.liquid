@@ -155,9 +155,9 @@ Required Permissions (Scopes):
               metafieldsSet(metafields: [{
                 ownerId: {{ product_id | json }},
                 namespace: "custom",
-                key: "description_generating",
+                key: "auto_description_generated",
                 type: "boolean",
-                value: "false"
+                value: "true"
               }]) {
                 userErrors { field message }
               }
@@ -224,7 +224,7 @@ Required Permissions (Scopes):
         vendor
         handle
         descriptionHtml
-        description_generating: metafield(namespace:"custom", key:"description_generating") { value }
+        auto_description_generated: metafield(namespace:"custom", key:"auto_description_generated") { value }
 
         bag_style: metafield(namespace:"custom", key:"bag_style") { value }
         bag_size: metafield(namespace:"custom", key:"bag_size") { value }
@@ -279,10 +279,22 @@ Required Permissions (Scopes):
       {% continue %}
     {% endif %}
 
-    {% comment %} === INFINITE LOOP PREVENTION: Check if product already has descriptionHtml or is being processed === {% endcomment %}
+{% comment %} === SKIP NON-HERMÈS HANDBAGS: If Bag Style is empty, do not run === {% endcomment %}
+{% if p.bag_style == blank or p.bag_style.value == blank %}
+  {%- log -%}
+  {
+    "stage": "skipped",
+    "reason": "Bag Style is empty; skipping AI description generation (manual description required)",
+    "product_id": {{ pid | json }},
+    "title": {{ p.title | json }}
+  }
+  {%- endlog -%}
+  {% continue %}
+{% endif %}
+    {% comment %} === INFINITE LOOP PREVENTION: Only skip if product has descriptionHtml === {% endcomment %}
     {% if event.topic == "shopify/products/update" %}
-      {% comment %} Skip if descriptionHtml exists and is substantial {% endcomment %}
-      {% if p.descriptionHtml != blank and p.descriptionHtml.size > 10 %}
+      {% comment %} Only skip if descriptionHtml actually exists - flag alone is not enough {% endcomment %}
+      {% if p.descriptionHtml != blank %}
         {%- log -%}
         {
           "stage": "skipped",
@@ -293,33 +305,6 @@ Required Permissions (Scopes):
         {%- endlog -%}
         {% continue %}
       {% endif %}
-      
-      {% comment %} Skip if already being processed (flag is set) {% endcomment %}
-      {% if p.description_generating.value == "true" %}
-        {%- log -%}
-        {
-          "stage": "skipped",
-          "reason": "Product description is already being generated, skipping to prevent duplicate processing",
-          "product_id": {{ pid | json }}
-        }
-        {%- endlog -%}
-        {% continue %}
-      {% endif %}
-      
-      {% comment %} Set processing flag immediately to prevent concurrent processing {% endcomment %}
-      {% action "shopify" %}
-        mutation {
-          metafieldsSet(metafields: [{
-            ownerId: {{ pid | json }},
-            namespace: "custom",
-            key: "description_generating",
-            type: "boolean",
-            value: "true"
-          }]) {
-            userErrors { field message }
-          }
-        }
-      {% endaction %}
     {% endif %}
 
     {% assign payload = hash %}

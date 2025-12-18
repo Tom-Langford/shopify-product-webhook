@@ -151,8 +151,11 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "Empty AI output" });
     }
 
-    clearTimeout(timeout);
-    return res.status(200).json({ description_html: descriptionText });
+      clearTimeout(timeout);
+      return res.status(200).json({ 
+        description_html: descriptionText,
+        product_id: product.id 
+      });
   } catch (err) {
     clearTimeout(timeout);
     if (res.headersSent) return;

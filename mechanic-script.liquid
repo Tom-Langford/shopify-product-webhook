@@ -1,7 +1,7 @@
 {% comment %}
 Purpose:
 Send structured product + metafield data to an external webhook
-to generate SEO product descriptions, then write the result back to the product body_html.
+to generate SEO product descriptions, then write the result back to the product descriptionHtml.
 
 Triggers (Subscriptions needed):
 - shopify/products/create
@@ -24,38 +24,77 @@ Required Permissions (Scopes):
 
 {% elsif event.topic == "mechanic/actions/perform" %}
   {% assign action_result = action.run.result %}
-
-  {% if action_result.body != blank %}
-    {% assign has_body = true %}
-  {% else %}
-    {% assign has_body = false %}
-  {% endif %}
-
-  {% assign body_type_str = action_result.body | type %}
-  {%- log -%}
-  {
-    "stage": "action_perform_received",
-    "action_type": {{ action.run.action | json }},
-    "status": {{ action_result.status | json }},
-    "has_body": {{ has_body | json }},
-    "body_type": {{ body_type_str | json }},
-    "options_available": {{ action.run.options | keys | json }}
-  }
-  {%- endlog -%}
-
-  {% comment %} Extract product_id from webhook response (webhook returns it for convenience) {% endcomment %}
-  {% assign response_data = action_result.body %}
-  {% assign product_id = response_data.product_id %}
   
-  {% if product_id == blank %}
+  {% comment %} Only process if this looks like an HTTP action response with description_html {% endcomment %}
+  {% assign is_http_action = false %}
+  {% if action_result != blank %}
+    {% if action_result.status != blank and action_result.body != blank %}
+      {% assign response_body = action_result.body %}
+      {% if response_body.description_html != blank %}
+        {% assign is_http_action = true %}
+      {% endif %}
+    {% endif %}
+  {% endif %}
+  
+  {% if is_http_action == false %}
+    {% if action_result != blank %}
+      {% assign has_result = true %}
+    {% else %}
+      {% assign has_result = false %}
+    {% endif %}
+    {% if action_result.status != blank %}
+      {% assign has_status = true %}
+    {% else %}
+      {% assign has_status = false %}
+    {% endif %}
+    {% if action_result.body != blank %}
+      {% assign has_body = true %}
+    {% else %}
+      {% assign has_body = false %}
+    {% endif %}
     {%- log -%}
     {
-      "stage": "error",
-      "message": "Could not extract product_id from webhook response",
-      "response_keys": {{ response_data | keys | json }}
+      "stage": "action_ignored",
+      "action_type": {{ action.run.action | json }},
+      "has_result": {{ has_result | json }},
+      "has_status": {{ has_status | json }},
+      "has_body": {{ has_body | json }},
+      "message": "Only processing HTTP actions with description_html response, ignoring this action"
     }
     {%- endlog -%}
-  {% endif %}
+  {% else %}
+
+    {% if action_result.body != blank %}
+      {% assign has_body = true %}
+    {% else %}
+      {% assign has_body = false %}
+    {% endif %}
+
+    {% assign body_type_str = action_result.body | type %}
+    {%- log -%}
+    {
+      "stage": "action_perform_received",
+      "action_type": {{ action.run.action | json }},
+      "status": {{ action_result.status | json }},
+      "has_body": {{ has_body | json }},
+      "body_type": {{ body_type_str | json }},
+      "options_available": {{ action.run.options | keys | json }}
+    }
+    {%- endlog -%}
+
+    {% comment %} Extract product_id from webhook response (webhook returns it for convenience) {% endcomment %}
+    {% assign response_data = action_result.body %}
+    {% assign product_id = response_data.product_id %}
+    
+    {% if product_id == blank %}
+      {%- log -%}
+      {
+        "stage": "error",
+        "message": "Could not extract product_id from webhook response",
+        "response_keys": {{ response_data | keys | json }}
+      }
+      {%- endlog -%}
+    {% endif %}
 
     {% if product_id != blank %}
       {% comment %} Mechanic automatically parses JSON responses, so body should already be an object {% endcomment %}
@@ -90,39 +129,45 @@ Required Permissions (Scopes):
           }
           {%- endlog -%}
 
-          {% capture update_mutation %}
+          {%- log -%}
+          {
+            "stage": "triggering_product_update",
+            "product_id": {{ product_id | json }},
+            "description_length": {{ response_data.description_html | size | json }}
+          }
+          {%- endlog -%}
+
+          {% action "shopify" %}
             mutation {
               productUpdate(input: {
                 id: {{ product_id | json }},
-                bodyHtml: {{ response_data.description_html | json }}
+                descriptionHtml: {{ response_data.description_html | json }}
               }) {
                 product { 
                   id 
-                  bodyHtml 
+                  descriptionHtml 
                 }
                 userErrors { 
                   field 
                   message 
                 }
               }
+              metafieldsSet(metafields: [{
+                ownerId: {{ product_id | json }},
+                namespace: "custom",
+                key: "description_generating",
+                type: "boolean",
+                value: "false"
+              }]) {
+                userErrors { field message }
+              }
             }
-          {% endcapture %}
-
-          {% assign update_result = update_mutation | shopify %}
-
-          {% if update_result.data.productUpdate.userErrors.size > 0 %}
-            {% assign has_user_errors = true %}
-          {% else %}
-            {% assign has_user_errors = false %}
-          {% endif %}
+          {% endaction %}
 
           {%- log -%}
           {
-            "stage": "product_updated",
-            "product_id": {{ product_id | json }},
-            "has_user_errors": {{ has_user_errors | json }},
-            "userErrors": {{ update_result.data.productUpdate.userErrors | json }},
-            "updated_bodyHtml_length": {{ update_result.data.productUpdate.product.bodyHtml | size | json }}
+            "stage": "product_update_action_triggered",
+            "product_id": {{ product_id | json }}
           }
           {%- endlog -%}
         {% else %}
@@ -147,6 +192,7 @@ Required Permissions (Scopes):
         {%- endlog -%}
       {% endif %}
     {% endif %}
+  {% endif %}
 
 {% else %}
   {%- log -%}
@@ -177,6 +223,8 @@ Required Permissions (Scopes):
         title
         vendor
         handle
+        descriptionHtml
+        description_generating: metafield(namespace:"custom", key:"description_generating") { value }
 
         bag_style: metafield(namespace:"custom", key:"bag_style") { value }
         bag_size: metafield(namespace:"custom", key:"bag_size") { value }
@@ -229,6 +277,49 @@ Required Permissions (Scopes):
     {% if p == blank %}
       {% log "No product returned from GraphQL" %}
       {% continue %}
+    {% endif %}
+
+    {% comment %} === INFINITE LOOP PREVENTION: Check if product already has descriptionHtml or is being processed === {% endcomment %}
+    {% if event.topic == "shopify/products/update" %}
+      {% comment %} Skip if descriptionHtml exists and is substantial {% endcomment %}
+      {% if p.descriptionHtml != blank and p.descriptionHtml.size > 10 %}
+        {%- log -%}
+        {
+          "stage": "skipped",
+          "reason": "Product already has descriptionHtml, skipping to prevent infinite loop",
+          "product_id": {{ pid | json }},
+          "description_length": {{ p.descriptionHtml | size | json }}
+        }
+        {%- endlog -%}
+        {% continue %}
+      {% endif %}
+      
+      {% comment %} Skip if already being processed (flag is set) {% endcomment %}
+      {% if p.description_generating.value == "true" %}
+        {%- log -%}
+        {
+          "stage": "skipped",
+          "reason": "Product description is already being generated, skipping to prevent duplicate processing",
+          "product_id": {{ pid | json }}
+        }
+        {%- endlog -%}
+        {% continue %}
+      {% endif %}
+      
+      {% comment %} Set processing flag immediately to prevent concurrent processing {% endcomment %}
+      {% action "shopify" %}
+        mutation {
+          metafieldsSet(metafields: [{
+            ownerId: {{ pid | json }},
+            namespace: "custom",
+            key: "description_generating",
+            type: "boolean",
+            value: "true"
+          }]) {
+            userErrors { field message }
+          }
+        }
+      {% endaction %}
     {% endif %}
 
     {% assign payload = hash %}

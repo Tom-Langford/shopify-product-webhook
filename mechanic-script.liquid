@@ -1,0 +1,413 @@
+{% comment %}
+Purpose:
+Send structured product + metafield data to an external webhook
+to generate SEO product descriptions, then write the result back to the product body_html.
+
+Triggers (Subscriptions needed):
+- shopify/products/create
+- shopify/products/update
+- mechanic/actions/perform   (required to receive the HTTP action result)
+
+Required Permissions (Scopes):
+- read_products
+- write_products
+- http (HTTP action)
+{% endcomment %}
+
+{% assign products_to_process = array %}
+
+{% if event.topic == "shopify/products/create" or event.topic == "shopify/products/update" %}
+  {% assign pid = product.admin_graphql_api_id %}
+  {% if pid %}
+    {% assign products_to_process = products_to_process | push: pid %}
+  {% endif %}
+
+{% elsif event.topic == "mechanic/actions/perform" %}
+  {% assign action_result = action.run.result %}
+
+  {% if action_result.body != blank %}
+    {% assign has_body = true %}
+  {% else %}
+    {% assign has_body = false %}
+  {% endif %}
+
+  {% assign body_type_str = action_result.body | type %}
+  {%- log -%}
+  {
+    "stage": "action_perform_received",
+    "action_type": {{ action.run.action | json }},
+    "status": {{ action_result.status | json }},
+    "has_body": {{ has_body | json }},
+    "body_type": {{ body_type_str | json }},
+    "options_available": {{ action.run.options | keys | json }}
+  }
+  {%- endlog -%}
+
+  {% comment %} Extract product_id from webhook response (webhook returns it for convenience) {% endcomment %}
+  {% assign response_data = action_result.body %}
+  {% assign product_id = response_data.product_id %}
+  
+  {% if product_id == blank %}
+    {%- log -%}
+    {
+      "stage": "error",
+      "message": "Could not extract product_id from webhook response",
+      "response_keys": {{ response_data | keys | json }}
+    }
+    {%- endlog -%}
+  {% endif %}
+
+    {% if product_id != blank %}
+      {% comment %} Mechanic automatically parses JSON responses, so body should already be an object {% endcomment %}
+      {% assign response_data = action_result.body %}
+
+      {% if response_data.description_html != blank %}
+        {% assign has_description_html = true %}
+      {% else %}
+        {% assign has_description_html = false %}
+      {% endif %}
+
+      {% assign response_data_type_str = response_data | type %}
+      {%- log -%}
+      {
+        "stage": "parsing_response",
+        "product_id": {{ product_id | json }},
+        "status": {{ action_result.status | json }},
+        "response_data_type": {{ response_data_type_str | json }},
+        "has_description_html": {{ has_description_html | json }}
+      }
+      {%- endlog -%}
+
+      {% if action_result.status == 200 and response_data != blank %}
+        {% if response_data.description_html != blank %}
+          {%- log -%}
+          {
+            "stage": "processing_http_response",
+            "product_id": {{ product_id | json }},
+            "status": {{ action_result.status | json }},
+            "description_length": {{ response_data.description_html | size | json }},
+            "description_preview": {{ response_data.description_html | truncate: 100 | json }}
+          }
+          {%- endlog -%}
+
+          {% capture update_mutation %}
+            mutation {
+              productUpdate(input: {
+                id: {{ product_id | json }},
+                bodyHtml: {{ response_data.description_html | json }}
+              }) {
+                product { 
+                  id 
+                  bodyHtml 
+                }
+                userErrors { 
+                  field 
+                  message 
+                }
+              }
+            }
+          {% endcapture %}
+
+          {% assign update_result = update_mutation | shopify %}
+
+          {% if update_result.data.productUpdate.userErrors.size > 0 %}
+            {% assign has_user_errors = true %}
+          {% else %}
+            {% assign has_user_errors = false %}
+          {% endif %}
+
+          {%- log -%}
+          {
+            "stage": "product_updated",
+            "product_id": {{ product_id | json }},
+            "has_user_errors": {{ has_user_errors | json }},
+            "userErrors": {{ update_result.data.productUpdate.userErrors | json }},
+            "updated_bodyHtml_length": {{ update_result.data.productUpdate.product.bodyHtml | size | json }}
+          }
+          {%- endlog -%}
+        {% else %}
+          {%- log -%}
+          {
+            "stage": "error",
+            "message": "No description_html in response",
+            "product_id": {{ product_id | json }},
+            "response_data": {{ response_data | json }}
+          }
+          {%- endlog -%}
+        {% endif %}
+      {% else %}
+        {%- log -%}
+        {
+          "stage": "error",
+          "message": "HTTP action failed or empty response",
+          "product_id": {{ product_id | json }},
+          "status": {{ action_result.status | json }},
+          "body": {{ action_result.body | json }}
+        }
+        {%- endlog -%}
+      {% endif %}
+    {% endif %}
+
+{% else %}
+  {%- log -%}
+  { "stage": "noop", "message": "Unsupported event topic", "topic": {{ event.topic | json }} }
+  {%- endlog -%}
+{% endif %}
+
+{% if event.topic == "shopify/products/create" or event.topic == "shopify/products/update" %}
+
+  {% for pid in products_to_process %}
+
+    {% assign bearer_token = shop.metafields.custom.mechanic_bearer_token.value | default: shop.metafields.custom.mechanic_bearer_token | default: '' %}
+
+    {% if bearer_token == blank %}
+      {%- log -%}
+      {
+        "stage": "error",
+        "message": "Bearer token not found. Please set shop.metafields.custom.mechanic_bearer_token in Shopify admin"
+      }
+      {%- endlog -%}
+      {% continue %}
+    {% endif %}
+
+    {% capture query %}
+    query {
+      product(id: {{ pid | json }}) {
+        id
+        title
+        vendor
+        handle
+
+        bag_style: metafield(namespace:"custom", key:"bag_style") { value }
+        bag_size: metafield(namespace:"custom", key:"bag_size") { value }
+        condition: metafield(namespace:"custom", key:"condition") { value }
+        receipt: metafield(namespace:"custom", key:"receipt") { value }
+        accessories: metafield(namespace:"custom", key:"accessories") { value }
+        stamp: metafield(namespace:"custom", key:"stamp") { value }
+        hardware: metafield(namespace:"custom", key:"hardware") { value }
+
+        dimensions: metafield(namespace:"custom", key:"dimensions") { value }
+
+        hermes_colour: metafield(namespace:"custom", key:"hermes_colour") {
+          references(first: 10) {
+            nodes { ... on Metaobject { fields { key value } } }
+          }
+        }
+
+        hermes_material: metafield(namespace:"custom", key:"hermes_material") {
+          references(first: 10) {
+            nodes { ... on Metaobject { fields { key value } } }
+          }
+        }
+
+        hermes_hardware: metafield(namespace:"custom", key:"hermes_hardware") {
+          reference { ... on Metaobject { fields { key value } } }
+        }
+
+        size_style_description: metafield(namespace:"custom", key:"size_style_description") {
+          reference {
+            ... on Metaobject {
+              style_size_descritpion: field(key:"style_size_descritpion") { value }
+            }
+          }
+        }
+
+        hermes_construction: metafield(namespace:"custom", key:"hermes_construction") {
+          reference {
+            ... on Metaobject {
+              construction_description: field(key:"construction_description") { value }
+            }
+          }
+        }
+      }
+    }
+    {% endcapture %}
+
+    {% assign result = query | shopify %}
+    {% assign p = result.data.product %}
+
+    {% if p == blank %}
+      {% log "No product returned from GraphQL" %}
+      {% continue %}
+    {% endif %}
+
+    {% assign payload = hash %}
+
+    {% assign product_hash = hash %}
+    {% assign product_hash["id"] = p.id %}
+    {% assign product_hash["title"] = p.title %}
+    {% assign product_hash["vendor"] = p.vendor %}
+    {% assign product_hash["handle"] = p.handle %}
+
+    {% assign structured = hash %}
+    {% assign specs = hash %}
+
+    {% if p.bag_style.value != blank %}
+      {% assign bag_style_raw = p.bag_style.value %}
+      {% if bag_style_raw contains '[' %}
+        {% assign bag_style_clean = bag_style_raw | remove: '[' | remove: ']' | remove: '"' | strip %}
+        {% assign bag_style_parts = bag_style_clean | split: ',' %}
+        {% assign specs["bag_style"] = bag_style_parts[0] | strip %}
+      {% else %}
+        {% assign specs["bag_style"] = bag_style_raw %}
+      {% endif %}
+    {% endif %}
+
+    {% if p.bag_size.value != blank %}
+      {% assign specs["bag_size_cm"] = p.bag_size.value | plus: 0 %}
+    {% endif %}
+
+    {% if p.condition.value != blank %}
+      {% assign condition_raw = p.condition.value %}
+      {% if condition_raw contains '[' %}
+        {% assign condition_clean = condition_raw | remove: '[' | remove: ']' | remove: '"' | strip %}
+        {% assign condition_parts = condition_clean | split: ',' %}
+        {% assign specs["condition"] = condition_parts[0] | strip %}
+      {% else %}
+        {% assign specs["condition"] = condition_raw %}
+      {% endif %}
+    {% endif %}
+
+    {% assign specs["stamp"] = p.stamp.value %}
+    {% assign specs["receipt"] = p.receipt.value %}
+    {% assign specs["accessories"] = p.accessories.value %}
+    {% assign specs["hardware"] = p.hardware.value %}
+
+    {% if p.dimensions.value != blank %}
+      {% assign dimensions_raw = p.dimensions.value %}
+      {% assign dims_parsed = dimensions_raw | parse_json %}
+      {% if dims_parsed != blank %}
+        {% assign dimensions_array = array %}
+        {% for d in dims_parsed %}
+          {% assign dim_obj = hash %}
+          {% assign dim_obj["value"] = d.value | plus: 0 %}
+          {% assign unit = d.unit | downcase | replace: "centimeters", "cm" | replace: "centimetres", "cm" %}
+          {% assign dim_obj["unit"] = unit %}
+          {% assign dimensions_array = dimensions_array | push: dim_obj %}
+        {% endfor %}
+        {% assign specs["dimensions"] = dimensions_array %}
+      {% else %}
+        {% assign specs["dimensions"] = dimensions_raw %}
+      {% endif %}
+    {% endif %}
+
+    {% assign colour_descriptions_array = array %}
+    {% assign material_descriptions_array = array %}
+    {% assign hardware_description_value = "" %}
+
+    {% if p.hermes_colour.references.nodes != blank %}
+      {% assign colour_categories = array %}
+      {% assign colour_codes = array %}
+
+      {% for colour_node in p.hermes_colour.references.nodes %}
+        {% for field in colour_node.fields %}
+          {% if field.key == 'blue' or field.key == 'pink_purple' or field.key == 'red' or field.key == 'orange_yellow' or field.key == 'green' or field.key == 'black_grey' or field.key == 'brown' or field.key == 'natural_white' %}
+            {% if field.value != blank %}
+              {% assign colour_categories = colour_categories | push: field.value %}
+            {% endif %}
+          {% endif %}
+          {% if field.key == 'colour_code' and field.value != blank %}
+            {% assign colour_codes = colour_codes | push: field.value %}
+          {% endif %}
+          {% if field.key == 'colour_description' and field.value != blank %}
+            {% assign colour_descriptions_array = colour_descriptions_array | push: field.value %}
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+
+      {% if colour_categories.size > 0 %}
+        {% assign specs["hermes_colour"] = colour_categories | uniq | join: ' | ' %}
+      {% endif %}
+      {% if colour_codes.size > 0 %}
+        {% assign specs["hermes_colour_code"] = colour_codes | uniq | join: ' | ' %}
+      {% endif %}
+    {% endif %}
+
+    {% if p.hermes_material.references.nodes != blank %}
+      {% assign material_categories = array %}
+
+      {% for material_node in p.hermes_material.references.nodes %}
+        {% for field in material_node.fields %}
+          {% if field.key == 'calfskin' or field.key == 'goatskin' or field.key == 'buffalo' or field.key == 'exotic_skins' or field.key == 'canvas' or field.key == 'other' %}
+            {% if field.value != blank %}
+              {% assign material_categories = material_categories | push: field.value %}
+            {% endif %}
+          {% endif %}
+          {% if field.key == 'material_description' and field.value != blank %}
+            {% assign material_descriptions_array = material_descriptions_array | push: field.value %}
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+
+      {% if material_categories.size > 0 %}
+        {% assign specs["hermes_material"] = material_categories | uniq | join: ' | ' %}
+      {% endif %}
+    {% endif %}
+
+    {% if specs["hermes_material"] != blank and specs["hermes_material"] contains '[' %}
+      {% assign material_raw = specs["hermes_material"] %}
+      {% assign material_clean = material_raw | remove: '[' | remove: ']' | remove: '"' | remove: '\' | strip %}
+      {% assign material_parts = material_clean | split: ',' %}
+      {% if material_parts.size > 0 %}
+        {% assign specs["hermes_material"] = material_parts[0] | strip %}
+      {% endif %}
+    {% endif %}
+
+    {% if p.hermes_hardware.reference != blank %}
+      {% for field in p.hermes_hardware.reference.fields %}
+        {% if field.key == 'hardware_description' and field.value != blank %}
+          {% assign hardware_description_value = field.value %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+
+    {% assign structured["specifications"] = specs %}
+
+    {% assign puzzle = hash %}
+    {% if p.size_style_description.reference != blank %}
+      {% assign puzzle["style_size_description"] = p.size_style_description.reference.style_size_descritpion.value %}
+    {% endif %}
+    {% if p.hermes_construction.reference != blank %}
+      {% assign puzzle["construction_description"] = p.hermes_construction.reference.construction_description.value %}
+    {% endif %}
+    {% if material_descriptions_array.size > 0 %}
+      {% assign puzzle["material_descriptions"] = material_descriptions_array %}
+    {% endif %}
+    {% if colour_descriptions_array.size > 0 %}
+      {% assign puzzle["colour_descriptions"] = colour_descriptions_array %}
+    {% endif %}
+    {% if hardware_description_value != blank %}
+      {% assign puzzle["hardware_description"] = hardware_description_value %}
+    {% endif %}
+
+    {% assign structured["puzzle_description"] = puzzle %}
+
+    {% assign payload["product"] = product_hash %}
+    {% assign payload["structured"] = structured %}
+
+    {%- log -%}
+    { "stage": "payload", "payload": {{ payload | json }} }
+    {%- endlog -%}
+
+    {% assign headers = hash %}
+    {% assign headers["Content-Type"] = "application/json" %}
+    {% assign headers["Authorization"] = "Bearer " | append: bearer_token %}
+
+    {% assign webhook_url = "https://shopify-product-webhook-git-main-fall-line-solutions-projects.vercel.app/api/generate-description" %}
+
+    {%- log -%}
+    { "stage": "triggering_http_action", "url": {{ webhook_url | json }}, "product_id": {{ p.id | json }} }
+    {%- endlog -%}
+
+    {% action "http" %}
+      {
+        "method": "post",
+        "url": {{ webhook_url | json }},
+        "headers": {{ headers | json }},
+        "body": {{ payload | json }}
+      }
+    {% endaction %}
+
+  {% endfor %}
+
+{% endif %}

@@ -16,27 +16,36 @@ from bs4 import BeautifulSoup
 
 # --- Legacy AI detection config (mirrors your Mechanic logic) ---
 AI_PHRASES = [
-    "timeless allure",
+    "timeless",
     "must-have",
-    "epitomizes luxury",
-    "unparalleled elegance",
-    "exquisite craftsmanship",
-    "sophisticated design",
+    "embodies",
+    "symphony"
+    "indulge",
+    "essence",
+    "allure",
+    "prestige",
+    "epitomizes",
+    "ellegance"
+    "unparalleled",
+    "exquisite",
+    "craftsmanship"
+    "sophisticated",
     "elevate your style",
-    "ultimate expression",
-    "embody sophistication",
-    "distinguished aesthetic",
+    "ultimate",
+    "expression",
+    "embody",
+    "aesthetic",
     "refined taste",
-    "luxurious experience",
-    "prestigious collection",
-    "iconic status",
-    "heritage of excellence",
+    "experience",
+    "luxurious",
+    "prestigious",
+    "status",
 ]
 
 EDITORS_NOTE_MAX_WORDS = 50
 MAX_CHAR_COUNT = 1200
 MAX_WORD_COUNT = 180
-MIN_AI_PHRASES = 2
+MIN_AI_PHRASES = 1
 
 DEFAULT_TIMEOUT = 120
 
@@ -488,6 +497,7 @@ def main() -> None:
             # Overwrite Body HTML (or chosen column)
             df.at[idx, args.write_column] = generated_html
             df.at[idx, args.status_column] = "GENERATED"
+            eprint(f"✅ [{idx}] Description written successfully")
             generated_count += 1
 
             if cfg.sleep_seconds:

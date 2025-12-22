@@ -291,19 +291,128 @@ Required Permissions (Scopes):
   {%- endlog -%}
   {% continue %}
 {% endif %}
-    {% comment %} === INFINITE LOOP PREVENTION: Only skip if product has descriptionHtml === {% endcomment %}
+    {% comment %} === INFINITE LOOP PREVENTION: Skip if product has descriptionHtml, UNLESS it's a legacy AI description or Editor's Note === {% endcomment %}
+    {% assign existing_editor_note = blank %}
     {% if event.topic == "shopify/products/update" %}
-      {% comment %} Only skip if descriptionHtml actually exists - flag alone is not enough {% endcomment %}
       {% if p.descriptionHtml != blank %}
+        {% comment %} Check if this is an Editor's Note (< 50 words) {% endcomment %}
+        {% assign description = p.descriptionHtml %}
+        {% assign char_count = description | size %}
+        
+        {% comment %} Strip HTML tags and normalize whitespace for accurate word count {% endcomment %}
+        {% assign description_text = description | strip_html %}
+        {% assign description_text = description_text | strip %}
+        {% comment %} Replace multiple spaces/newlines with single space {% endcomment %}
+        {% assign description_text = description_text | replace: "  ", " " | replace: "\n", " " | replace: "\r", " " | strip %}
+        
+        {% comment %} Count words by splitting on spaces and filtering out empty strings {% endcomment %}
+        {% assign words_array = description_text | split: " " %}
+        {% assign word_count = 0 %}
+        {% for word in words_array %}
+          {% assign word_trimmed = word | strip %}
+          {% if word_trimmed != blank %}
+            {% assign word_count = word_count | plus: 1 %}
+          {% endif %}
+        {% endfor %}
+        
+        {% assign EDITORS_NOTE_MAX_WORDS = 50 %}
+        
         {%- log -%}
         {
-          "stage": "skipped",
-          "reason": "Product already has descriptionHtml, skipping to prevent infinite loop",
+          "stage": "checking_existing_description",
           "product_id": {{ pid | json }},
-          "description_length": {{ p.descriptionHtml | size | json }}
+          "char_count": {{ char_count | json }},
+          "word_count": {{ word_count | json }},
+          "max_words_for_editors_note": {{ EDITORS_NOTE_MAX_WORDS | json }},
+          "description_preview": {{ description | truncate: 150 | json }},
+          "text_after_strip": {{ description_text | truncate: 100 | json }}
         }
         {%- endlog -%}
-        {% continue %}
+        
+        {% assign is_editors_note = false %}
+        {% if word_count > 0 and word_count <= EDITORS_NOTE_MAX_WORDS %}
+          {% assign is_editors_note = true %}
+          {% assign existing_editor_note = description %}
+        {% endif %}
+        
+        {% if is_editors_note %}
+          {%- log -%}
+          {
+            "stage": "editors_note_detected",
+            "reason": "Product has Editor's Note (< 50 words), will include in generation",
+            "product_id": {{ pid | json }},
+            "word_count": {{ word_count | json }},
+            "note_preview": {{ description | truncate: 100 | json }}
+          }
+          {%- endlog -%}
+          {% comment %} Continue processing - Editor's Note will be included in payload {% endcomment %}
+        {% else %}
+          {% comment %} Check if this is a legacy AI description that should be regenerated {% endcomment %}
+          {% comment %} AI-style marker phrases to detect {% endcomment %}
+          {% assign ai_phrases = "timeless allure|must-have|epitomizes luxury|unparalleled elegance|exquisite craftsmanship|sophisticated design|elevate your style|ultimate expression|embody sophistication|distinguished aesthetic|refined taste|luxurious experience|prestigious collection|iconic status|heritage of excellence" | split: "|" %}
+          
+          {% comment %} Configuration for legacy AI detection {% endcomment %}
+          {% assign MAX_CHAR_COUNT = 1200 %}
+          {% assign MAX_WORD_COUNT = 180 %}
+          {% assign MIN_AI_PHRASES = 2 %}
+          
+          {% comment %} Check for AI phrases {% endcomment %}
+          {% assign ai_phrase_count = 0 %}
+          {% assign description_lower = description | downcase %}
+          {% for phrase in ai_phrases %}
+            {% assign phrase_lower = phrase | downcase %}
+            {% if description_lower contains phrase_lower %}
+              {% assign ai_phrase_count = ai_phrase_count | plus: 1 %}
+            {% endif %}
+          {% endfor %}
+          
+          {% comment %} Determine if this is a legacy AI description {% endcomment %}
+          {% assign exceeds_chars = false %}
+          {% if char_count > MAX_CHAR_COUNT %}
+            {% assign exceeds_chars = true %}
+          {% endif %}
+          
+          {% assign exceeds_words = false %}
+          {% if word_count > MAX_WORD_COUNT %}
+            {% assign exceeds_words = true %}
+          {% endif %}
+          
+          {% assign has_ai_phrases = false %}
+          {% if ai_phrase_count >= MIN_AI_PHRASES %}
+            {% assign has_ai_phrases = true %}
+          {% endif %}
+          
+          {% assign is_legacy_ai = false %}
+          {% if exceeds_chars and exceeds_words and has_ai_phrases %}
+            {% assign is_legacy_ai = true %}
+          {% endif %}
+          
+          {% if is_legacy_ai %}
+            {%- log -%}
+            {
+              "stage": "legacy_ai_detected",
+              "reason": "Product has legacy AI description, will regenerate",
+              "product_id": {{ pid | json }},
+              "char_count": {{ char_count | json }},
+              "word_count": {{ word_count | json }},
+              "ai_phrase_count": {{ ai_phrase_count | json }}
+            }
+            {%- endlog -%}
+            {% comment %} Continue processing to regenerate the description {% endcomment %}
+          {% else %}
+            {%- log -%}
+            {
+              "stage": "skipped",
+              "reason": "Product already has descriptionHtml (not legacy AI or Editor's Note), skipping to prevent infinite loop",
+              "product_id": {{ pid | json }},
+              "description_length": {{ char_count | json }},
+              "word_count": {{ word_count | json }},
+              "ai_phrase_count": {{ ai_phrase_count | json }}
+            }
+            {%- endlog -%}
+            {% continue %}
+          {% endif %}
+        {% endif %}
       {% endif %}
     {% endif %}
 
@@ -457,6 +566,18 @@ Required Permissions (Scopes):
     {% endif %}
 
     {% assign structured["puzzle_description"] = puzzle %}
+
+    {% comment %} Add Editor's Note if detected {% endcomment %}
+    {% if existing_editor_note != blank %}
+      {% assign structured["editor_note"] = existing_editor_note %}
+      {%- log -%}
+      {
+        "stage": "adding_editors_note",
+        "product_id": {{ pid | json }},
+        "note_length": {{ existing_editor_note | size | json }}
+      }
+      {%- endlog -%}
+    {% endif %}
 
     {% assign payload["product"] = product_hash %}
     {% assign payload["structured"] = structured %}
